@@ -108,8 +108,8 @@ export function AuthProvider({
 
       const demoProfile: Profile = {
         id: 'demo-user-id',
-        full_name: 'Demo User',
-        nip: '123456789',
+        full_name: 'Naila Aghna',
+        nip: '1247050051',
         role: email.includes('admin')
           ? 'admin'
           : 'guru',

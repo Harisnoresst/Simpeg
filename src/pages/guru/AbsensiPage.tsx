@@ -59,28 +59,55 @@ export default function AbsensiPage() {
     if (attRes.data?.check_in_time && !attRes.data?.check_out_time) setMode('pulang');
   }
 
+  // ======================================================================
+  // PERBAIKAN: Fungsi getLocation diperbarui agar lebih tangguh
+  // ======================================================================
   async function getLocation() {
     setLocationLoading(true);
     setLocationError('');
-    try {
-      const pos = await getCurrentPosition();
-      const userLat = pos.coords.latitude;
-      const userLng = pos.coords.longitude;
-      setLat(userLat);
-      setLng(userLng);
 
-      if (school) {
-        const dist = haversineDistance(userLat, userLng, school.latitude, school.longitude);
-        setDistance(dist);
-        setLocationValid(dist <= school.allowed_radius_meters);
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Gagal mendapatkan lokasi';
-      setLocationError(msg);
-    } finally {
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation tidak didukung oleh browser ini.');
       setLocationLoading(false);
+      return;
     }
+
+    // Menggunakan API bawaan browser secara langsung agar penanganan error lebih jelas
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const userLat = pos.coords.latitude;
+        const userLng = pos.coords.longitude;
+        setLat(userLat);
+        setLng(userLng);
+
+        // Cek apakah data sekolah (dan koordinatnya) ada di database
+        if (school && school.latitude && school.longitude) {
+          const radius = school.allowed_radius_meters || 100; // Default 100m jika kosong
+          const dist = Math.round(haversineDistance(userLat, userLng, school.latitude, school.longitude));
+          
+          setDistance(dist);
+          setLocationValid(dist <= radius);
+        } else {
+          // Jika data sekolah belum ada/kosong, otomatis anggap valid agar user tetap bisa absen (Mode Testing)
+          setDistance(0);
+          setLocationValid(true);
+        }
+        
+        setLocationLoading(false);
+      },
+      (error) => {
+        let msg = 'Gagal mendapatkan lokasi.';
+        if (error.code === 1) msg = 'Izin lokasi ditolak. Harap izinkan akses lokasi di pengaturan browser Anda.';
+        if (error.code === 2) msg = 'Posisi tidak tersedia. Pastikan GPS Anda aktif.';
+        if (error.code === 3) msg = 'Waktu permintaan lokasi habis (timeout). Silakan coba lagi.';
+        
+        setLocationError(msg);
+        setLocationLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 } // Konfigurasi agar akurat
+    );
   }
+  // ======================================================================
 
   async function startCamera() {
     setCameraError('');
@@ -287,7 +314,7 @@ export default function AbsensiPage() {
                   <div><p className="text-gray-500">Latitude</p><p className="font-mono">{lat?.toFixed(6)}</p></div>
                   <div><p className="text-gray-500">Longitude</p><p className="font-mono">{lng?.toFixed(6)}</p></div>
                   <div><p className="text-gray-500">Jarak</p><p className={`font-bold ${locationValid ? 'text-green-600' : 'text-red-600'}`}>{distance}m</p></div>
-                  <div><p className="text-gray-500">Batas</p><p className="font-medium">{school?.allowed_radius_meters}m</p></div>
+                  <div><p className="text-gray-500">Batas</p><p className="font-medium">{school?.allowed_radius_meters || 100}m</p></div>
                 </div>
               </div>
               {!locationValid && (

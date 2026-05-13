@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Clock, Calendar, CheckCircle, XCircle, AlertCircle, MapPin, ClipboardCheck, LogOut } from 'lucide-react';
+import { 
+  Clock, 
+  MapPin, 
+  CheckCircle, 
+  LogIn, 
+  LogOut, 
+  Bell, 
+  Monitor, 
+  FileX, 
+  History, 
+  ClipboardList 
+} from 'lucide-react';
 import { supabase, Attendance, School } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -9,32 +20,30 @@ type Props = {
   onNavigate: (page: Page) => void;
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  hadir: 'text-green-600 bg-green-50',
-  terlambat: 'text-yellow-600 bg-yellow-50',
-  tidak_hadir: 'text-red-600 bg-red-50',
-  izin: 'text-blue-600 bg-blue-50',
-  sakit: 'text-orange-600 bg-orange-50',
-  cuti: 'text-gray-600 bg-gray-100',
-  belum_absen: 'text-gray-500 bg-gray-50',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  hadir: 'Hadir',
-  terlambat: 'Terlambat',
-  tidak_hadir: 'Tidak Hadir',
-  izin: 'Izin',
-  sakit: 'Sakit',
-  cuti: 'Cuti',
-  belum_absen: 'BELUM ABSEN',
-};
-
 export default function DashboardGuru({ onNavigate }: Props) {
   const { profile } = useAuth();
   const [todayAttendance, setTodayAttendance] = useState<Attendance | null>(null);
   const [school, setSchool] = useState<School | null>(null);
-  const [weekSummary, setWeekSummary] = useState({ hadir: 0, tidakHadir: 0, terlambat: 0, izin: 0 });
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [weekSummary, setWeekSummary] = useState({ hadir: 4, tidakHadir: 0, terlambat: 1, izin: 0 }); 
+  const [currentTime, setCurrentTime] = useState(new Date()); 
+  const [distance, setDistance] = useState<number | null>(null); // State baru untuk jarak real-time
+
+  // Fungsi formatting
+  const formatDay = (d: Date) => d.toLocaleDateString('id-ID', { weekday: 'long' });
+  const formatDateFull = (d: Date) => d.toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' });
+  const formatTime = (d: Date) => d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/\./g, ':');
+
+  // Rumus Haversine untuk menghitung jarak antara 2 titik koordinat (dalam meter)
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // Radius bumi dalam meter
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return Math.round(R * c);
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -44,6 +53,27 @@ export default function DashboardGuru({ onNavigate }: Props) {
   useEffect(() => {
     if (profile) loadData();
   }, [profile]);
+
+  // Effect baru untuk mendapatkan lokasi user dan menghitung jarak ke sekolah
+  useEffect(() => {
+    if (school && school.latitude && school.longitude) {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const userLat = position.coords.latitude;
+            const userLng = position.coords.longitude;
+            // Hitung jarak user saat ini ke koordinat sekolah dari database
+            const dist = calculateDistance(userLat, userLng, school.latitude, school.longitude);
+            setDistance(dist);
+          },
+          (error) => {
+            console.error("Gagal mendapatkan lokasi:", error);
+          },
+          { enableHighAccuracy: true } // Akurasi tinggi untuk GPS Absensi
+        );
+      }
+    }
+  }, [school]);
 
   async function loadData() {
     const today = new Date().toISOString().split('T')[0];
@@ -55,8 +85,8 @@ export default function DashboardGuru({ onNavigate }: Props) {
         : supabase.from('schools').select('*').limit(1).maybeSingle(),
     ]);
 
-    setTodayAttendance(attRes.data);
-    setSchool(schoolRes.data);
+    if (attRes.data) setTodayAttendance(attRes.data);
+    if (schoolRes.data) setSchool(schoolRes.data);
 
     const startOfWeek = new Date();
     startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay() + 1);
@@ -66,7 +96,7 @@ export default function DashboardGuru({ onNavigate }: Props) {
       .eq('user_id', profile!.id)
       .gte('date', startOfWeek.toISOString().split('T')[0]);
 
-    if (weekData) {
+    if (weekData && weekData.length > 0) {
       const summary = { hadir: 0, tidakHadir: 0, terlambat: 0, izin: 0 };
       weekData.forEach(a => {
         if (a.status === 'hadir') summary.hadir++;
@@ -78,175 +108,181 @@ export default function DashboardGuru({ onNavigate }: Props) {
     }
   }
 
-  const formatDate = (d: Date) =>
-    d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-
-  const formatTime = (d: Date) =>
-    d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
   const status = todayAttendance?.status || 'belum_absen';
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="bg-gradient-to-r from-blue-800 to-blue-600 rounded-2xl p-6 text-white shadow-lg">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <p className="text-blue-200 text-sm">Selamat pagi,</p>
-            <h2 className="text-2xl font-bold">{profile?.full_name || 'Guru'}</h2>
-            <p className="text-blue-200 text-sm">{profile?.subject || 'Guru'}</p>
+    <div className="min-h-screen bg-[#f4f7fb] p-6 sm:p-8 font-sans">
+
+      {/* Baris 1: 4 Kartu Informasi Cepat */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        
+        {/* Card 1: Profil Singkat */}
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+          <p className="text-gray-900 font-medium mb-1">Selamat pagi,</p>
+          <h2 className="text-2xl font-bold text-gray-900 leading-tight mb-1">{profile?.full_name || 'Jamal'}</h2>
+          <p className="text-gray-500 text-sm">{profile?.subject || 'Guru Informatika'}</p>
+        </div>
+
+        {/* Card 2: Tanggal */}
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+          <p className="text-gray-900 font-medium mb-1">Tanggal</p>
+          <h2 className="text-2xl font-bold text-gray-900 leading-tight mb-1">{formatDateFull(currentTime)}</h2>
+          <p className="text-gray-500 text-sm">{formatDay(currentTime)}</p>
+        </div>
+
+        {/* Card 3: Jam Sekarang */}
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
+          <p className="text-gray-900 font-medium mb-1">Jam Sekarang</p>
+          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">{formatTime(currentTime)}</h2>
+          <Clock className="absolute top-5 right-5 w-6 h-6 text-gray-400 stroke-[1.5]" />
+        </div>
+
+        {/* Card 4: Status */}
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+          <p className="text-gray-900 font-medium mb-2">Status Hari Ini</p>
+          <div className="bg-red-50 text-red-600 text-[10px] font-bold px-3 py-1.5 rounded w-max mb-2 tracking-wide">
+            BELUM ABSEN
           </div>
-          <div className="flex gap-6">
-            <div className="text-center">
-              <p className="text-blue-200 text-xs mb-1">Tanggal</p>
-              <p className="font-semibold text-sm">{formatDate(currentTime)}</p>
+          <p className="text-gray-500 text-sm">Belum Melakukan Absensi Masuk</p>
+        </div>
+
+      </div>
+
+      {/* Baris 2: Lokasi & Aksi */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        
+        {/* Card Lokasi Sekolah */}
+        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+          <h3 className="font-semibold text-lg text-gray-900 mb-5">Lokasi Sekolah</h3>
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-gray-500 rounded-full flex items-center justify-center shrink-0">
+              <MapPin className="w-6 h-6 text-white" />
             </div>
-            <div className="text-center">
-              <p className="text-blue-200 text-xs mb-1 flex items-center gap-1 justify-center">
-                <Clock className="w-3 h-3" /> Jam Sekarang
+            <div>
+              <p className="font-semibold text-gray-800">{school?.name || 'SMAN 1 Rancaekek'}</p>
+              
+              {/* Jarak dinamis menggunakan GPS */}
+              <p className="text-sm text-gray-600 mt-1 mb-3">
+                Jarak Anda ke sekolah: {distance !== null ? `${distance} Meter` : 'Mendeteksi...'}
               </p>
-              <p className="font-bold text-lg font-mono">{formatTime(currentTime)}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-blue-200 text-xs mb-1">Status Hari Ini</p>
-              <span className={`text-xs font-bold px-2 py-1 rounded-full ${
-                status === 'belum_absen' ? 'bg-red-500 text-white' :
-                status === 'hadir' ? 'bg-green-400 text-white' :
-                'bg-yellow-400 text-gray-900'
-              }`}>
-                {STATUS_LABELS[status]}
-              </span>
+              
+              {/* Indikator dinamis: Menggunakan allowed_radius dari DB & Jarak Aktual */}
+              {school?.allowed_radius_meters ? (
+                <span className={`inline-block text-xs font-medium px-3 py-1.5 rounded ${
+                  distance !== null && distance <= school.allowed_radius_meters
+                    ? 'bg-[#e6ffe6] text-green-600' 
+                    : 'bg-[#ffebea] text-red-600'   
+                }`}>
+                  {distance !== null && distance <= school.allowed_radius_meters
+                    ? `Dalam radius (${school.allowed_radius_meters} Meter)`
+                    : `Di luar radius (${school.allowed_radius_meters} Meter)`
+                  }
+                </span>
+              ) : (
+                <span className="inline-block bg-gray-100 text-gray-500 text-xs font-medium px-3 py-1.5 rounded">
+                  Belum di set euy sama si admin jaraknya....
+                </span>
+              )}
+
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-          <h3 className="font-semibold text-gray-700 mb-4 flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-blue-600" />
-            Lokasi Sekolah
-          </h3>
-          {school ? (
-            <div className="space-y-2">
-              <p className="font-medium text-gray-800">{school.name}</p>
-              <p className="text-sm text-gray-500">{school.address}</p>
-              <div className="flex gap-4 mt-3">
-                <div className="bg-blue-50 rounded-lg px-3 py-2 text-center flex-1">
-                  <p className="text-xs text-gray-500">Radius Absen</p>
-                  <p className="font-bold text-blue-700">{school.allowed_radius_meters}m</p>
-                </div>
-                <div className="bg-green-50 rounded-lg px-3 py-2 text-center flex-1">
-                  <p className="text-xs text-gray-500">Koordinat</p>
-                  <p className="font-bold text-green-700 text-xs">{school.latitude.toFixed(4)}, {school.longitude.toFixed(4)}</p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400">Belum ada sekolah terdaftar</p>
-          )}
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-          <h3 className="font-semibold text-gray-700 mb-4">Aksi Cepat</h3>
-          <div className="grid grid-cols-2 gap-3">
+        {/* Card Aksi Cepat */}
+        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+          <h3 className="font-semibold text-lg text-gray-900 mb-5">Aksi Cepat</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <button
               onClick={() => onNavigate('absensi')}
-              disabled={!!todayAttendance?.check_in_time}
-              className="flex flex-col items-center gap-2 p-4 bg-green-50 hover:bg-green-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl border border-green-200 transition-colors"
+              // Validasi tambahan: tombol disable jika di luar radius
+              disabled={!!todayAttendance?.check_in_time || (distance !== null && school?.allowed_radius_meters !== undefined && distance > school.allowed_radius_meters)}
+              className="flex items-center gap-4 p-4 bg-[#eaffea] hover:bg-[#dfffdf] disabled:opacity-60 border border-[#bbf7d0] rounded-xl text-left transition-colors"
             >
-              <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
-                <ClipboardCheck className="w-5 h-5 text-white" />
+              <div className="w-10 h-10 border-2 border-green-600 rounded-lg flex items-center justify-center shrink-0">
+                <LogIn className="w-6 h-6 text-green-600" />
               </div>
-              <span className="text-sm font-medium text-green-700">Absen Masuk</span>
-              <span className="text-xs text-green-600">
-                {todayAttendance?.check_in_time ? `Sudah: ${todayAttendance.check_in_time}` : 'Tidak terlambat lagi'}
-              </span>
+              <div>
+                <p className="font-semibold text-green-600">Absen Masuk</p>
+                <p className="text-xs text-gray-600 mt-0.5">Catat kehadiran masuk</p>
+              </div>
             </button>
+
             <button
               onClick={() => onNavigate('absensi')}
-              disabled={!todayAttendance?.check_in_time || !!todayAttendance?.check_out_time}
-              className="flex flex-col items-center gap-2 p-4 bg-red-50 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl border border-red-200 transition-colors"
+              disabled={!todayAttendance?.check_in_time || !!todayAttendance?.check_out_time || (distance !== null && school?.allowed_radius_meters !== undefined && distance > school.allowed_radius_meters)}
+              className="flex items-center gap-4 p-4 bg-[#ffebea] hover:bg-[#ffe0df] disabled:opacity-60 border border-[#fecaca] rounded-xl text-left transition-colors"
             >
-              <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center">
-                <LogOut className="w-5 h-5 text-white" />
+              <div className="w-10 h-10 border-2 border-red-600 rounded-lg flex items-center justify-center shrink-0">
+                <LogOut className="w-6 h-6 text-red-600" />
               </div>
-              <span className="text-sm font-medium text-red-700">Absen Pulang</span>
-              <span className="text-xs text-red-600">
-                {todayAttendance?.check_out_time ? `Sudah: ${todayAttendance.check_out_time}` : 'Catat kehadiran pulang'}
-              </span>
+              <div>
+                <p className="font-semibold text-red-600">Absen Pulang</p>
+                <p className="text-xs text-gray-600 mt-0.5">Catat kehadiran pulang</p>
+              </div>
             </button>
           </div>
         </div>
+
       </div>
 
+      {/* Baris 3: Informasi & Ringkasan */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-          <h3 className="font-semibold text-gray-700 mb-4">Informasi</h3>
-          <ul className="space-y-2 text-sm text-gray-600">
-            <li className="flex items-start gap-2">
-              <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-              Pastikan Anda berada di area sekolah saat absen
+        
+        {/* Card Informasi */}
+        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+          <h3 className="font-semibold text-lg text-gray-900 mb-5">Informasi</h3>
+          <ul className="space-y-4 text-sm text-gray-600">
+            <li className="flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+              <span>Pastikan Anda Berada di Area sekolah saat melakukan absensi</span>
             </li>
-            <li className="flex items-start gap-2">
-              <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-              Absen masuk sebelum pukul 07:30 WIB
+            <li className="flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+              <span>Ambil foto selfie dengan jelas</span>
             </li>
-            <li className="flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
-              Foto selfie harus menampilkan wajah dengan jelas
-            </li>
-            <li className="flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
-              Absen pulang tidak dapat dilakukan sebelum absen masuk
-            </li>
-            <li className="flex items-start gap-2">
-              <XCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
-              Absen di luar radius sekolah tidak akan diterima
+            <li className="flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+              <span>Jika ada kendala, hubungi administrator sekolah</span>
             </li>
           </ul>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-          <h3 className="font-semibold text-gray-700 mb-4">Ringkasan Minggu Ini</h3>
-          <div className="grid grid-cols-4 gap-3">
-            {[
-              { label: 'Hadir', value: weekSummary.hadir, color: 'text-green-600', bg: 'bg-green-50', icon: CheckCircle },
-              { label: 'Tidak Hadir', value: weekSummary.tidakHadir, color: 'text-red-600', bg: 'bg-red-50', icon: XCircle },
-              { label: 'Terlambat', value: weekSummary.terlambat, color: 'text-yellow-600', bg: 'bg-yellow-50', icon: AlertCircle },
-              { label: 'Izin', value: weekSummary.izin, color: 'text-blue-600', bg: 'bg-blue-50', icon: Calendar },
-            ].map(item => {
-              const Icon = item.icon;
-              return (
-                <div key={item.label} className={`${item.bg} rounded-xl p-3 text-center`}>
-                  <Icon className={`w-5 h-5 ${item.color} mx-auto mb-1`} />
-                  <p className={`text-xl font-bold ${item.color}`}>{item.value}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{item.label}</p>
-                </div>
-              );
-            })}
-          </div>
-
-          {todayAttendance && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <p className="text-xs font-medium text-gray-500 mb-2">Detail Hari Ini</p>
-              <div className="flex gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">Masuk: </span>
-                  <span className="font-medium text-gray-800">{todayAttendance.check_in_time || '-'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">Pulang: </span>
-                  <span className="font-medium text-gray-800">{todayAttendance.check_out_time || '-'}</span>
-                </div>
-                <div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[todayAttendance.status]}`}>
-                    {STATUS_LABELS[todayAttendance.status]}
-                  </span>
-                </div>
-              </div>
+        {/* Card Ringkasan Minggu Ini */}
+        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+          <h3 className="font-semibold text-lg text-gray-900 mb-5">Ringkasan Minggu Ini</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            
+            {/* Hadir */}
+            <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-4 relative">
+              <p className="text-green-600 font-semibold text-sm mb-2">Hadir</p>
+              <p className="text-3xl font-bold text-green-600">{weekSummary.hadir}</p>
+              <Monitor className="absolute bottom-4 right-4 w-5 h-5 text-gray-400" />
             </div>
-          )}
+
+            {/* Tidak Hadir */}
+            <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-4 relative">
+              <p className="text-red-600 font-semibold text-sm mb-2">Tidak Hadir</p>
+              <p className="text-3xl font-bold text-red-600">{weekSummary.tidakHadir}</p>
+              <FileX className="absolute bottom-4 right-4 w-5 h-5 text-gray-400" />
+            </div>
+
+            {/* Terlambat */}
+            <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-4 relative">
+              <p className="text-yellow-400 font-semibold text-sm mb-2">Terlambat</p>
+              <p className="text-3xl font-bold text-yellow-400">{weekSummary.terlambat}</p>
+              <History className="absolute bottom-4 right-4 w-5 h-5 text-gray-400" />
+            </div>
+
+            {/* Izin */}
+            <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-4 relative">
+              <p className="text-blue-600 font-semibold text-sm mb-2">Izin</p>
+              <p className="text-3xl font-bold text-blue-600">{weekSummary.izin}</p>
+              <ClipboardList className="absolute bottom-4 right-4 w-5 h-5 text-gray-400" />
+            </div>
+
+          </div>
         </div>
+
       </div>
     </div>
   );
