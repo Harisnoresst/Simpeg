@@ -23,7 +23,7 @@ export default function LoginPage({ onNavigate }: Props) {
       setError('Email atau password salah.');
       setLoading(false); // Hanya matikan loading jika gagal
     }
-    // Jika berhasil, AuthContext akan otomatis memicu App.tsx untuk pindah halaman
+   
   }
 
   return (
@@ -118,7 +118,7 @@ export default function LoginPage({ onNavigate }: Props) {
                 </span>
               </p>
               <p className="text-xs text-gray-500">
-                dummy akun <br /> DosenNaila@gmail.com <br /> 1247050051
+                Akun Admin <br /> NailaAdmin@Simpeg.com <br /> Simpeg3
               </p>
             </div>
           </div>

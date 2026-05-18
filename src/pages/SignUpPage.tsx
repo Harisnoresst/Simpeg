@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext'; // <-- Menggunakan AuthContext untuk memanggil Laravel
 
 type Props = {
   onNavigate: (page: 'login' | 'register') => void;
 };
 
 export default function SignUpPage({ onNavigate }: Props) {
+  // Ambil fungsi signUp dari AuthContext
+  const { signUp } = useAuth();
+
   // State Form
   const [role, setRole] = useState('guru');
   const [nip, setNip] = useState('');
@@ -35,38 +38,18 @@ export default function SignUpPage({ onNavigate }: Props) {
 
     setLoading(true);
 
-    try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            role: role,
-            nip: nip
-          }
-        }
-      });
+    // Panggil fungsi signUp dari Laravel via AuthContext
+    const { error: signUpError } = await signUp(email, password, {
+      full_name: fullName,
+      nip: nip,
+      role: role // Role (admin/guru) dikirim ke Laravel di sini
+    });
 
-      if (authError) throw authError;
-
-      if (authData.user) {
-        await supabase.from('profiles').upsert({
-          id: authData.user.id,
-          role: role,
-          nip: nip,
-          full_name: fullName,
-          email: email
-        });
-      }
-
-      alert('Pendaftaran berhasil! Silakan login menggunakan akun yang baru dibuat.');
-      onNavigate('login');
-
-    } catch (err: any) {
-      setError(err.message || 'Terjadi kesalahan saat mendaftar. Pastikan email belum digunakan.');
-    } finally {
+    if (signUpError) {
+      setError(signUpError.message);
       setLoading(false);
+    } else {
+      onNavigate('login'); 
     }
   }
 

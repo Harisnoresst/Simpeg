@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import api from '../../lib/axios'; // <-- Mengganti supabase dengan axios ke backend Laravel
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Bell, MapPin, Clock, Briefcase, LogOut, Users, 
@@ -52,14 +52,21 @@ export default function AdminPengaturanPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
 
-  // --- AMBIL DATA DARI DATABASE ---
+  // --- AMBIL DATA DARI DATABASE MYSQL ---
   useEffect(() => {
     async function loadSettings() {
       setIsLoading(true);
       try {
-        const { data, error } = await supabase.from('app_settings').select('*').eq('id', 1).single();
-        if (error) throw error;
-        if (data) setSettings({ ...DEFAULT_SETTINGS, ...data });
+        const { data } = await api.get('/admin/settings');
+        if (data && Object.keys(data).length > 0) {
+          // Konversi angka 1/0 dari MySQL menjadi boolean (true/false) untuk React UI
+          const booleanKeys = ['absen_ganda', 'foto_selfie', 'validasi_lokasi', 'mode_pemeliharaan', 'notif_email', 'notif_push', 'notif_keterlambatan', 'notif_pengajuan'];
+          const mappedData = { ...data };
+          booleanKeys.forEach(key => {
+            if (mappedData[key] !== undefined) mappedData[key] = !!mappedData[key];
+          });
+          setSettings({ ...DEFAULT_SETTINGS, ...mappedData });
+        }
       } catch (err) {
         console.log("Database pengaturan belum disetup, menggunakan default dummy.");
       } finally {
@@ -74,24 +81,22 @@ export default function AdminPengaturanPage() {
     setSettings(prev => ({ ...prev, [key]: value }));
   };
 
-  // --- SIMPAN KE DATABASE ---
+  // --- SIMPAN KE DATABASE MYSQL ---
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const { error } = await supabase.from('app_settings').upsert({ id: 1, ...settings });
-      if (error) throw error;
-      alert("Pengaturan berhasil disimpan dan disinkronkan!");
+      await api.post('/admin/settings', settings);
     } catch (err) {
-      alert("Pengaturan tersimpan secara lokal (Database Supabase untuk settings belum siap).");
+      alert("Gagal menyimpan ke database. Pastikan backend server Anda berjalan.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  // --- HANDLER LOKASI OTOMATIS ---
+
   const handleUbahLokasiOtomatis = () => {
     if ("geolocation" in navigator) {
-      alert("Mencari lokasi Anda...");
+      // alert("Mencari lokasi Anda...");
       navigator.geolocation.getCurrentPosition(
         (position) => {
           handleChange('latitude', position.coords.latitude.toFixed(6).toString());
@@ -105,14 +110,19 @@ export default function AdminPengaturanPage() {
   };
 
   // --- HANDLER BACKUP DATA ---
-  const handleBackup = () => {
+  const handleBackup = async () => {
     setIsBackingUp(true);
-    setTimeout(() => {
-      const now = new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
-      handleChange('last_backup', now);
+    const now = new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+    handleChange('last_backup', now);
+    
+    try {
+      // Simpan status last backup ke database juga
+      await api.post('/admin/settings', { ...settings, last_backup: now });
+    } catch (err) {
+      alert("Gagal mencatat status backup.");
+    } finally {
       setIsBackingUp(false);
-      alert("Data berhasil dibackup!");
-    }, 2000);
+    }
   };
 
   // --- LOGIKA PETA ---
@@ -219,7 +229,9 @@ export default function AdminPengaturanPage() {
             </div>
             <p className="text-[10px] text-gray-400 mt-2">* Radius adalah jarak maksimal dari titik lokasi sekolah.</p>
         </div>
-        <button onClick={handleSave} className="w-full mt-6 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold transition-colors">Simpan Lokasi</button>
+        <button onClick={handleSave} disabled={isSaving} className="w-full mt-6 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold transition-colors">
+            {isSaving ? 'Menyimpan...' : 'Simpan Lokasi'}
+        </button>
     </div>
   );
 
@@ -257,7 +269,9 @@ export default function AdminPengaturanPage() {
                 <p className="text-[11px] text-[#3b82f6] leading-relaxed">Jam kerja ini digunakan untuk perhitungan durasi kerja dan absensi.</p>
             </div>
         </div>
-        <button onClick={handleSave} className="w-full mt-6 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold transition-colors">Simpan Jam Kerja</button>
+        <button onClick={handleSave} disabled={isSaving} className="w-full mt-6 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold transition-colors">
+            {isSaving ? 'Menyimpan...' : 'Simpan Jam Kerja'}
+        </button>
     </div>
   );
 
@@ -279,8 +293,8 @@ export default function AdminPengaturanPage() {
             </div>
             <ToggleRow icon={AlertTriangle} iconColor="text-[#f97316]" title="Mode Pemeliharaan" desc="Aktifkan ini untuk mematikan akses guru ke aplikasi sementara waktu." checked={settings.mode_pemeliharaan} onChange={(v: boolean) => handleChange('mode_pemeliharaan', v)} />
         </div>
-        <button onClick={handleSave} className="mt-8 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold flex items-center gap-2 transition-colors">
-            <Save className="w-4 h-4" /> Simpan Aplikasi
+        <button onClick={handleSave} disabled={isSaving} className="mt-8 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold flex items-center gap-2 transition-colors">
+            <Save className="w-4 h-4" /> {isSaving ? 'Menyimpan...' : 'Simpan Aplikasi'}
         </button>
     </div>
   );
@@ -294,8 +308,8 @@ export default function AdminPengaturanPage() {
             <ToggleRow icon={Clock} iconColor="text-[#eab308]" title="Peringatan Keterlambatan" desc="Beri peringatan saat guru absen masuk melewati batas waktu." checked={settings.notif_keterlambatan} onChange={(v: boolean) => handleChange('notif_keterlambatan', v)} />
             <ToggleRow icon={Briefcase} iconColor="text-[#22c55e]" title="Notifikasi Pengajuan" desc="Beri tahu admin jika ada pengajuan izin/cuti baru dari guru." checked={settings.notif_pengajuan} onChange={(v: boolean) => handleChange('notif_pengajuan', v)} />
         </div>
-        <button onClick={handleSave} className="mt-8 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold flex items-center gap-2 transition-colors">
-            <Save className="w-4 h-4" /> Simpan Notifikasi
+        <button onClick={handleSave} disabled={isSaving} className="mt-8 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold flex items-center gap-2 transition-colors">
+            <Save className="w-4 h-4" /> {isSaving ? 'Menyimpan...' : 'Simpan Notifikasi'}
         </button>
     </div>
   );
@@ -331,11 +345,13 @@ export default function AdminPengaturanPage() {
                 </button>
             </div>
         </div>
-        <button onClick={handleSave} className="mt-8 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold flex items-center gap-2 transition-colors">
-            <Save className="w-4 h-4" /> Simpan Pengaturan Backup
+        <button onClick={handleSave} disabled={isSaving} className="mt-8 bg-[#1d4ed8] hover:bg-blue-800 text-white px-6 py-2.5 rounded-md text-[13px] font-semibold flex items-center gap-2 transition-colors">
+            <Save className="w-4 h-4" /> {isSaving ? 'Menyimpan...' : 'Simpan Pengaturan Backup'}
         </button>
     </div>
   );
+
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center text-gray-500 font-semibold bg-[#f4f7fc]">Memuat pengaturan dari database...</div>;
 
   return (
     <div className="min-h-screen bg-[#f4f7fc] font-sans pb-12">

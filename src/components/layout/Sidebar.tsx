@@ -56,10 +56,7 @@ export default function Sidebar({ currentPage, onNavigate }: Props) {
   const { profile, signOut } = useAuth();
   const isAdmin = profile?.role === 'admin';
 
-  
   const [logoutState, setLogoutState] = useState<'idle' | 'confirm' | 'success'>('idle');
-  
-  
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const guruMenu: MenuItem[] = [
@@ -151,19 +148,26 @@ export default function Sidebar({ currentPage, onNavigate }: Props) {
           })}
         </nav>
 
-        {/* FOOTER USER */}
+        {/* FOOTER USER (DIPERBARUI) */}
         <div className={`border-t border-[#1a3b77] bg-[#011e54] transition-all duration-300 ${isCollapsed ? 'px-2 py-4 flex justify-center' : 'px-5 py-4'}`}>
           <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'}`}>
-            <div className="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center text-sm font-bold text-white shadow-inner shrink-0">
-              {profile?.full_name?.[0]?.toUpperCase() || 'U'}
+            {/* Foto Profil Dinamis */}
+            <div className="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center text-sm font-bold text-white shadow-inner shrink-0 overflow-hidden border border-[#1a3b77]">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="Profil" className="w-full h-full object-cover" />
+              ) : (
+                profile?.name?.[0]?.toUpperCase() || 'U'
+              )}
             </div>
+            
+            {/* Nama & Role Dinamis */}
             {!isCollapsed && (
               <div className="flex-1 min-w-0 whitespace-nowrap overflow-hidden">
                 <p className="text-[13px] font-bold truncate text-white">
-                  {profile?.full_name || 'User'}
+                  {profile?.name || 'User'}
                 </p>
                 <p className="text-[11px] text-blue-200 capitalize">
-                  {profile?.role || 'guru'}
+                  {profile?.role || 'Guru'}
                 </p>
               </div>
             )}

@@ -1,0 +1,36 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+   public function up()
+   {
+       Schema::create('leave_requests', function (Blueprint $table) {
+           $table->id();
+           $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
+           $table->string('type', 50);
+           $table->date('start_date');
+           $table->date('end_date');
+           $table->text('reason');
+           $table->string('status', 50)->default('menunggu');
+           $table->string('attachment_name')->nullable();
+           $table->string('attachment_size', 50)->nullable();
+           $table->string('attachment_url')->nullable();
+           $table->timestamps();
+       });
+   }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('leaves_request');
+    }
+};

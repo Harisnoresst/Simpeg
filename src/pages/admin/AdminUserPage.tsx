@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import api from '../../lib/axios'; // <-- Gunakan axios
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Users, User, Bell, ChevronDown, Search, Edit, Trash2, 
@@ -17,20 +17,7 @@ type UserProfile = {
   last_login: string;
 };
 
-// --- DATA DUMMY (Persis 100% Sesuai Gambar) ---
-const DUMMY_USERS: UserProfile[] = [
-  { id: '1', nama: 'Jamal', username: 'Jamalae', email: 'jamalyuno@gmail.com', role: 'Guru', status: 'Aktif', last_login: '14 Mei 2026\n23:00' },
-  { id: '2', nama: 'Jeno', username: '', email: '', role: '', status: 'Tidak Aktif', last_login: '' },
-  { id: '3', nama: 'Naila', username: 'nagnap', email: 'naila.auliyap@gmail.com', role: 'Admin', status: 'Aktif', last_login: '' },
-  { id: '4', nama: 'Anton', username: '', email: '', role: '', status: 'Aktif', last_login: '' }, // Status default jika kosong
-];
-
-const DUMMY_STATS = {
-  total: 80,
-  admin: 6,
-  guru: 31,
-  operator: 2
-};
+const DUMMY_STATS = { total: 0, admin: 0, guru: 0, operator: 0 };
 
 export default function AdminPenggunaPage() {
   const { profile } = useAuth();
@@ -44,10 +31,12 @@ export default function AdminPenggunaPage() {
   // State Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('Semua Role');
-  const [filterStatus, setFilterStatus] = useState('Status Aktif');
+  const [filterStatus, setFilterStatus] = useState('Semua Status'); // Sesuaikan default
 
-  // State Modal Tambah
+  // State Modal Tambah & Edit
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editId, setEditId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addForm, setAddForm] = useState({
     nama: '', username: '', email: '', role: 'Guru', status: 'Aktif'
@@ -61,48 +50,36 @@ export default function AdminPenggunaPage() {
   async function fetchUsers() {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
+      const { data } = await api.get('/admin/users'); // Tembak API Backend
 
       if (data && data.length > 0) {
-        const mappedData: UserProfile[] = data.map(item => ({
-          id: item.id,
-          nama: item.full_name || item.nama || 'Tanpa Nama',
-          username: item.username || '',
+        const mappedData: UserProfile[] = data.map((item: any) => ({
+          id: item.id.toString(),
+          nama: item.name || 'Tanpa Nama',
+          username: item.username || '-',
           email: item.email || '',
           role: item.role ? item.role.charAt(0).toUpperCase() + item.role.slice(1) : 'Guru',
           status: item.status || 'Aktif',
-          last_login: item.last_sign_in_at ? new Date(item.last_sign_in_at).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).replace(', ', '\n') : '',
+          last_login: item.last_login ? new Date(item.last_login).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).replace(', ', '\n') : 'Belum pernah login',
         }));
 
         setUsers(mappedData);
         setFilteredUsers(mappedData);
 
         // Update Stats
-        const adminCount = mappedData.filter(u => u.role.toLowerCase() === 'admin').length;
-        const guruCount = mappedData.filter(u => u.role.toLowerCase() === 'guru').length;
-        const operatorCount = mappedData.filter(u => u.role.toLowerCase() === 'operator').length;
-
         setStats({
           total: mappedData.length,
-          admin: adminCount,
-          guru: guruCount,
-          operator: operatorCount
+          admin: mappedData.filter(u => u.role.toLowerCase() === 'admin').length,
+          guru: mappedData.filter(u => u.role.toLowerCase() === 'guru').length,
+          operator: mappedData.filter(u => u.role.toLowerCase() === 'operator').length
         });
       } else {
-        setUsers(DUMMY_USERS);
-        setFilteredUsers(DUMMY_USERS);
+        setUsers([]);
+        setFilteredUsers([]);
         setStats(DUMMY_STATS);
       }
     } catch (err) {
-      console.log("Database belum siap, menggunakan Data Dummy");
-      setUsers(DUMMY_USERS);
-      setFilteredUsers(DUMMY_USERS);
-      setStats(DUMMY_STATS);
+      console.error("Gagal memuat pengguna dari database", err);
     } finally {
       setIsLoading(false);
     }
@@ -128,7 +105,7 @@ export default function AdminPenggunaPage() {
     }
 
     // Filter Status
-    if (filterStatus !== 'Status Aktif' && filterStatus !== 'Semua Status') {
+    if (filterStatus !== 'Semua Status') {
         const statusValue = filterStatus === 'Aktif' ? 'Aktif' : 'Tidak Aktif';
         result = result.filter(u => u.status === statusValue);
     }
@@ -136,57 +113,64 @@ export default function AdminPenggunaPage() {
     setFilteredUsers(result);
   }, [searchTerm, filterRole, filterStatus, users]);
 
-  // --- LOGIKA TAMBAH PENGGUNA ---
-  const handleAddUser = async () => {
+  // --- BUKA MODAL ---
+  const openAddModal = () => {
+      setAddForm({ nama: '', username: '', email: '', role: 'Guru', status: 'Aktif' });
+      setIsEditMode(false);
+      setIsModalOpen(true);
+  };
+
+  const openEditModal = (user: UserProfile) => {
+      setAddForm({ 
+          nama: user.nama, 
+          username: user.username === '-' ? '' : user.username, 
+          email: user.email, 
+          role: user.role, 
+          status: user.status 
+      });
+      setEditId(user.id);
+      setIsEditMode(true);
+      setIsModalOpen(true);
+  };
+
+
+  const handleSaveUser = async () => {
     if (!addForm.nama || !addForm.email) {
-      alert("Nama dan Email wajib diisi!");
       return;
     }
 
     setIsSubmitting(true);
-    const newUser: UserProfile = {
-      id: Math.random().toString(36).substr(2, 9),
-      nama: addForm.nama,
-      username: addForm.username,
-      email: addForm.email,
-      role: addForm.role,
-      status: addForm.status as 'Aktif' | 'Tidak Aktif',
-      last_login: ''
-    };
-
     try {
-      const { error } = await supabase.from('profiles').insert([{
-        id: newUser.id,
-        full_name: newUser.nama,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role.toLowerCase(),
-        status: newUser.status
-      }]);
-      if (error) throw error;
-      alert("Pengguna berhasil ditambahkan!");
-    } catch (error) {
-      console.log("Menyimpan ke state lokal (Mode Dummy)");
-    } finally {
-      const updatedList = [newUser, ...users];
-      setUsers(updatedList);
-      setIsSubmitting(false);
+      if (isEditMode) {
+          await api.put(`/admin/users/${editId}`, addForm);
+      } else {
+          await api.post('/admin/users', addForm);
+          alert("Pengguna berhasil ditambahkan! Password default: password123");
+      }
       setIsModalOpen(false);
-      setAddForm({ nama: '', username: '', email: '', role: 'Guru', status: 'Aktif' });
-      
-      // Update Stats manually if local
-      setStats({
-          total: updatedList.length,
-          admin: updatedList.filter(u => u.role === 'Admin').length,
-          guru: updatedList.filter(u => u.role === 'Guru').length,
-          operator: updatedList.filter(u => u.role === 'Operator').length,
-      });
+      fetchUsers(); // Refresh data setelah berhasil
+    } catch (error: any) {
+      alert("Gagal menyimpan data: " + (error.response?.data?.message || "Kesalahan jaringan"));
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  // --- LOGIKA HAPUS ---
+  const handleDelete = async (id: string, nama: string) => {
+      if(window.confirm(`Yakin ingin menghapus pengguna ${nama}? Semua data terkait akan ikut terhapus.`)) {
+          try {
+              await api.delete(`/admin/users/${id}`);
+              fetchUsers();
+          } catch (error) {
+              alert("Gagal menghapus pengguna.");
+          }
+      }
   };
 
   // --- LOGIKA EXPORT ---
   const handleExport = () => {
-    let csv = "No,Nama Guru,Username,Email,Role,Status,Terakhir Login\n";
+    let csv = "No,Nama,Username,Email,Role,Status,Terakhir Login\n";
     filteredUsers.forEach((u, i) => {
         csv += `${i+1},${u.nama},${u.username},${u.email},${u.role},${u.status},${u.last_login.replace('\n', ' ')}\n`;
     });
@@ -208,7 +192,7 @@ export default function AdminPenggunaPage() {
   };
 
   const getStatusBadge = (status: string) => {
-    if (!status || status === '') return null; // Sesuai gambar "Anton" tidak ada statusnya (atau default Aktif)
+    if (!status || status === '') return null; 
     if (status === 'Aktif') return <span className="bg-[#dcfce7] text-[#166534] border border-[#bbf7d0] px-3 py-1 rounded text-[11px] font-semibold">Aktif</span>;
     return <span className="bg-[#fee2e2] text-[#991b1b] border border-[#fecaca] px-3 py-1 rounded text-[11px] font-semibold">Tidak Aktif</span>;
   };
@@ -308,7 +292,7 @@ export default function AdminPenggunaPage() {
             {/* Tombol Aksi */}
             <div className="flex items-center gap-3 w-full sm:w-auto">
                 <button 
-                   onClick={() => setIsModalOpen(true)}
+                   onClick={openAddModal}
                    className="flex-1 sm:flex-none bg-[#4455f0] hover:bg-blue-700 text-white px-5 py-2.5 rounded-md text-[12px] font-semibold transition-colors flex items-center justify-center gap-1.5"
                 >
                     + Tambah Pengguna
@@ -340,7 +324,7 @@ export default function AdminPenggunaPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-50 text-gray-500 font-medium">
                         {isLoading ? (
-                            <tr><td colSpan={8} className="px-6 py-10 text-center text-gray-400">Memuat data...</td></tr>
+                            <tr><td colSpan={8} className="px-6 py-10 text-center text-gray-400">Memuat data pengguna dari database...</td></tr>
                         ) : filteredUsers.length === 0 ? (
                             <tr><td colSpan={8} className="px-6 py-10 text-center text-gray-400">Data pengguna tidak ditemukan</td></tr>
                         ) : (
@@ -360,12 +344,12 @@ export default function AdminPenggunaPage() {
                                     <td className="px-6 py-4">{getStatusBadge(user.status)}</td>
                                     <td className="px-6 py-4 whitespace-pre-line leading-snug">{user.last_login}</td>
                                     <td className="px-6 py-4">
-                                        {user.nama !== 'Anton' && user.nama !== 'Jeno' ? ( // Sesuai gambar, baris 2 & 4 kosong
+                                        {user.nama !== 'Anton' && user.nama !== 'Jeno' ? ( // Pertahankan logic UI original
                                             <div className="flex items-center justify-center gap-3">
-                                                <button className="text-gray-400 hover:text-gray-600 transition-colors">
+                                                <button onClick={() => openEditModal(user)} className="text-gray-400 hover:text-blue-600 transition-colors">
                                                     <Edit className="w-[18px] h-[18px]" />
                                                 </button>
-                                                <button className="text-red-400 hover:text-red-600 transition-colors">
+                                                <button onClick={() => handleDelete(user.id, user.nama)} className="text-red-400 hover:text-red-600 transition-colors">
                                                     <Trash2 className="w-[18px] h-[18px]" />
                                                 </button>
                                             </div>
@@ -381,7 +365,7 @@ export default function AdminPenggunaPage() {
             {/* Pagination */}
             <div className="bg-[#f4f7fc] px-6 py-5 flex flex-col sm:flex-row items-center justify-between border-t border-gray-100 gap-4 mt-8">
                 <span className="text-[14px] text-gray-700 font-bold">
-                    Menampilkan 1 - 5 dari 20 data
+                    Menampilkan 1 - {Math.min(5, filteredUsers.length)} dari {filteredUsers.length} data
                 </span>
                 <div className="flex items-center gap-1.5">
                     <button className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 disabled:opacity-50" disabled>
@@ -390,8 +374,6 @@ export default function AdminPenggunaPage() {
                     <button className="w-8 h-8 flex items-center justify-center rounded bg-[#e0e7ff] text-[#4455f0] font-medium text-sm border border-[#c7d2fe]">1</button>
                     <button className="w-8 h-8 flex items-center justify-center rounded text-gray-600 hover:bg-white font-medium text-sm border border-gray-300">2</button>
                     <button className="w-8 h-8 flex items-center justify-center rounded text-gray-600 hover:bg-white font-medium text-sm border border-gray-300">3</button>
-                    <button className="w-8 h-8 flex items-center justify-center rounded text-gray-600 hover:bg-white font-medium text-sm border border-gray-300">4</button>
-                    <button className="w-8 h-8 flex items-center justify-center rounded text-gray-600 hover:bg-white font-medium text-sm border border-gray-300">5</button>
                     <button className="w-8 h-8 flex items-center justify-center text-gray-800 hover:bg-white border border-transparent hover:border-gray-300 rounded">
                         <ChevronRight className="w-5 h-5" />
                     </button>
@@ -402,14 +384,14 @@ export default function AdminPenggunaPage() {
       </div>
 
       {/* ==============================================
-          MODAL TAMBAH PENGGUNA
+          MODAL TAMBAH & EDIT PENGGUNA
           ============================================== */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-[500px] overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-200">
             
             <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 bg-white shrink-0">
-                <h3 className="font-bold text-lg text-gray-800">Tambah Pengguna Baru</h3>
+                <h3 className="font-bold text-lg text-gray-800">{isEditMode ? 'Edit Pengguna' : 'Tambah Pengguna Baru'}</h3>
                 <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition-colors">
                     <X className="w-5 h-5" />
                 </button>
@@ -473,7 +455,7 @@ export default function AdminPenggunaPage() {
                     Batal
                 </button>
                 <button 
-                   onClick={handleAddUser} disabled={isSubmitting}
+                   onClick={handleSaveUser} disabled={isSubmitting}
                    className="px-6 py-2.5 rounded-lg text-sm font-semibold bg-[#4455f0] hover:bg-blue-700 text-white flex items-center gap-2 shadow-sm transition-colors"
                 >
                     <Save className="w-4 h-4" />

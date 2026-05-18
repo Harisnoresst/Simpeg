@@ -3,109 +3,61 @@ import {
   Users, User, AlertTriangle, FileText, ChevronRight, 
   CheckCircle2, Bell, ChevronDown 
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import api from '../../lib/axios'; // <-- Gunakan Axios
 import { useAuth } from '../../contexts/AuthContext';
 
-// --- DATA DUMMY (Fallback jika DB Kosong) ---
-const DUMMY_STATS = { totalGuru: 100, hadirHariIni: 91, tidakHadir: 6, terlambat: 5, izin: 3, tidakValid: 7 };
-
-const DUMMY_LINE_CHART = [
-  { label: '00:00', hadir: 10, terlambat: 15, absen: 30 },
-  { label: '01:00', hadir: 32, terlambat: 10,  absen: 40 },
-  { label: '02:00', hadir: 45, terlambat: 32, absen: 28 },
-  { label: '03:00', hadir: 32, terlambat: 18, absen: 50 },
-  { label: '04:00', hadir: 34, terlambat: 9, absen: 42 },
-  { label: '05:00', hadir: 52, terlambat: 25, absen: 82 },
-  { label: '06:00', hadir: 40, terlambat: 10, absen: 55 },
-];
-
+// --- DATA FALLBACK (Jika DB Kosong) ---
+const DUMMY_STATS = { totalGuru: 0, hadirHariIni: 0, tidakHadir: 0, terlambat: 0, izin: 0, tidakValid: 0 };
+const DUMMY_LINE_CHART = [{ label: '-', hadir: 0, terlambat: 0, absen: 0 }];
 const DUMMY_RADAR_DATA = [
-  { subject: 'Informatika', alokasi: 100, aktual: 90 },
-  { subject: 'Matematika', alokasi: 100, aktual: 60 },
-  { subject: 'Seni', alokasi: 100, aktual: 85 },
-  { subject: 'Fisika', alokasi: 100, aktual: 75 },
-  { subject: 'Biologi', alokasi: 100, aktual: 88 },
-  { subject: 'Kimia', alokasi: 100, aktual: 95 },
+  { subject: 'Umum', alokasi: 100, aktual: 0 },
+  { subject: 'Guru Kelas', alokasi: 100, aktual: 0 }
 ];
 
 export default function AdminDashboard() {
   const { profile } = useAuth();
-  const [stats, setStats] = useState(DUMMY_STATS);
   
-  // State untuk Grafik
+  // State Data dari Database
+  const [stats, setStats] = useState(DUMMY_STATS);
   const [lineData, setLineData] = useState(DUMMY_LINE_CHART);
   const [radarData, setRadarData] = useState(DUMMY_RADAR_DATA);
+  const [recentAttendances, setRecentAttendances] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
   // State Tooltip Kustom (Muncul saat kursor di-hover ke grafik)
   const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, title: '', label: '', value: '', color: '' });
 
+  // --- PERBAIKAN: Fungsi Load Data Khusus Admin ---
   useEffect(() => {
     async function loadData() {
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
-      
-      // Hitung 7 Hari Terakhir untuk Line Chart
-      const last7Days = Array.from({length: 7}, (_, i) => {
-         const d = new Date();
-         d.setDate(d.getDate() - (6 - i));
-         return d.toISOString().split('T')[0];
-      });
-
+      setIsLoading(true);
       try {
-        const [gRes, aRes, weekRes] = await Promise.all([
-          supabase.from('profiles').select('id', { count: 'exact' }).eq('role', 'guru'),
-          supabase.from('attendances').select('*').eq('date', todayStr),
-          supabase.from('attendances').select('date, status').gte('date', last7Days[0])
-        ]);
-
-        // 1. Update Kartu Statistik
-        if (gRes.data || aRes.data) {
-          const atts = aRes.data || [];
-          setStats({
-            totalGuru: gRes.count || DUMMY_STATS.totalGuru,
-            hadirHariIni: atts.filter(x => ['hadir'].includes(x.status)).length || DUMMY_STATS.hadirHariIni,
-            tidakHadir: atts.filter(x => x.status === 'tidak_hadir').length || DUMMY_STATS.tidakHadir,
-            terlambat: atts.filter(x => x.status === 'terlambat').length || DUMMY_STATS.terlambat,
-            izin: atts.filter(x => ['izin', 'sakit', 'cuti'].includes(x.status)).length || DUMMY_STATS.izin,
-            tidakValid: 7 // Dummy fix
-          });
-        }
-
-        // 2. Update Line Chart Data (7 Hari Terakhir)
-        if (weekRes.data && weekRes.data.length > 0) {
-            const chartMap = new Map(last7Days.map(date => [
-                date, 
-                { 
-                  label: new Date(date).toLocaleDateString('id-ID', {day: '2-digit', month: 'short'}),
-                  hadir: 0, terlambat: 0, absen: 0 
-                }
-            ]));
-
-            weekRes.data.forEach(att => {
-               if (chartMap.has(att.date)) {
-                   const day = chartMap.get(att.date)!;
-                   if (att.status === 'hadir') day.hadir++;
-                   else if (att.status === 'terlambat') day.terlambat++;
-                   else if (att.status === 'tidak_hadir') day.absen++;
-               }
-            });
-            setLineData(Array.from(chartMap.values()));
-        }
+        // Panggil endpoint khusus Admin
+        const { data } = await api.get('/admin/dashboard');
+        
+        // Simpan ke state masing-masing
+        if (data.stats) setStats(data.stats);
+        if (data.lineData && data.lineData.length > 0) setLineData(data.lineData);
+        if (data.radarData && data.radarData.length > 0) setRadarData(data.radarData);
+        if (data.recentAttendances) setRecentAttendances(data.recentAttendances);
+        if (data.activities) setActivities(data.activities);
 
       } catch (error) {
-        console.log("Menggunakan data dummy untuk grafik");
+        console.error("Gagal memuat data dashboard admin:", error);
+      } finally {
+        setIsLoading(false);
       }
     }
     loadData();
   }, []);
 
-  // --- LOGIKA MATE-MATIKA GRAFIK GARIS (LINE CHART) ---
+  // --- LOGIKA MATEMATIKA GRAFIK GARIS (LINE CHART) ---
   const lineChartHeight = 150;
   const lineChartWidth = 400;
-  const maxLineVal = Math.max(...lineData.flatMap(d => [d.hadir, d.terlambat, d.absen]), 100);
+  const maxLineVal = Math.max(...lineData.flatMap(d => [d.hadir, d.terlambat, d.absen]), 10) * 1.2; // Tambah 20% ruang atas
   const xStep = lineChartWidth / (lineData.length - 1 || 1);
 
-  // Fungsi membuat garis lengkung utama (Bezier Curve)
   const getSmoothPath = (dataKey: 'hadir' | 'terlambat' | 'absen') => {
       let path = '';
       lineData.forEach((d, i) => {
@@ -123,19 +75,20 @@ export default function AdminDashboard() {
       return path;
   };
 
-  // Fungsi membuat area isi (Gradient) yang menutup ke bawah sumbu X
   const getFillAreaPath = (dataKey: 'hadir' | 'terlambat' | 'absen') => {
       const linePath = getSmoothPath(dataKey);
       return `${linePath} L ${lineChartWidth} ${lineChartHeight} L 0 ${lineChartHeight} Z`;
   };
 
-  // --- LOGIKA MATE-MATIKA GRAFIK RADAR ---
+  // --- LOGIKA MATEMATIKA GRAFIK RADAR ---
   const radarCenter = 100;
   const radarRadius = 70;
   const angleStep = (Math.PI * 2) / Math.max(radarData.length, 1);
 
   const getRadarPoint = (val: number, i: number, max: number = 100) => {
-      const r = (val / max) * radarRadius;
+      // Amankan pembagian dengan 0
+      const safeMax = max > 0 ? max : 100; 
+      const r = (val / safeMax) * radarRadius;
       const theta = i * angleStep - Math.PI / 2; // Mulai dari atas (jam 12)
       return { x: radarCenter + r * Math.cos(theta), y: radarCenter + r * Math.sin(theta) };
   };
@@ -146,10 +99,20 @@ export default function AdminDashboard() {
   };
   const hideTooltip = () => setTooltip({ ...tooltip, show: false });
 
+  // Format Jam (07:30:00 menjadi 07.30)
+  const formatTime = (timeStr: string) => timeStr ? timeStr.substring(0, 5).replace(':', '.') : '-';
+
+  // Format Tanggal/Waktu Aktivitas
+  const formatActivityTime = (dateStr: string) => {
+      if(!dateStr) return '-';
+      const d = new Date(dateStr);
+      return `${d.getDate()} ${d.toLocaleString('id-ID', {month:'short'})} ${d.getFullYear()} - ${d.getHours().toString().padStart(2,'0')}.${d.getMinutes().toString().padStart(2,'0')}`;
+  };
+
   return (
     <div className="min-h-screen bg-[#f4f7fc] font-sans pb-10 relative">
       
-      {/* TOOLTIP PORTAL (Akan mengikuti posisi kursor) */}
+      {/* TOOLTIP PORTAL */}
       {tooltip.show && (
           <div 
              className="fixed z-50 bg-gray-900/95 backdrop-blur-sm text-white px-4 py-2.5 rounded-lg shadow-xl pointer-events-none transform -translate-x-1/2 -translate-y-[120%] transition-opacity duration-150"
@@ -174,7 +137,7 @@ export default function AdminDashboard() {
                 <Users className="w-8 h-8 text-gray-900" />
                 <span className="text-2xl font-bold text-gray-900">{stats.totalGuru}</span>
               </div>
-              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang (%)</span>
+              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang</span>
             </div>
           </div>
           <div className="bg-white rounded-xl p-4 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)]">
@@ -184,47 +147,47 @@ export default function AdminDashboard() {
                 <User className="w-8 h-8 text-gray-900 fill-gray-900" />
                 <span className="text-2xl font-bold text-[#22c55e]">{stats.hadirHariIni}</span>
               </div>
-              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang (%)</span>
+              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang</span>
             </div>
           </div>
           <div className="bg-white rounded-xl p-4 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)]">
             <p className="text-[13px] font-semibold text-gray-800 mb-3">Tidak Hadir</p>
             <div className="flex items-end justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gray-100"></div>
+                <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><FileText className="w-4 h-4 text-red-500" /></div>
                 <span className="text-2xl font-bold text-[#ef4444]">{stats.tidakHadir}</span>
               </div>
-              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang (%)</span>
+              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang</span>
             </div>
           </div>
           <div className="bg-white rounded-xl p-4 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)]">
             <p className="text-[13px] font-semibold text-gray-800 mb-3">Terlambat</p>
             <div className="flex items-end justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gray-100"></div>
+                <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-yellow-500" /></div>
                 <span className="text-2xl font-bold text-[#eab308]">{stats.terlambat}</span>
               </div>
-              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang (%)</span>
+              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang</span>
             </div>
           </div>
           <div className="bg-white rounded-xl p-4 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)]">
-            <p className="text-[13px] font-semibold text-gray-800 mb-3">Izin</p>
+            <p className="text-[13px] font-semibold text-gray-800 mb-3">Izin/Cuti/Sakit</p>
             <div className="flex items-end justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gray-100"></div>
+                <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><FileText className="w-4 h-4 text-blue-500" /></div>
                 <span className="text-2xl font-bold text-[#3b82f6]">{stats.izin}</span>
               </div>
-              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang (%)</span>
+              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang</span>
             </div>
           </div>
-          <div className="bg-white rounded-xl p-4 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)]">
+          <div className="bg-white rounded-xl p-4 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] opacity-70">
             <p className="text-[13px] font-semibold text-gray-800 mb-3">Lokasi Tidak Valid</p>
             <div className="flex items-end justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gray-100"></div>
+                <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-indigo-500" /></div>
                 <span className="text-2xl font-bold text-[#6366f1]">{stats.tidakValid}</span>
               </div>
-              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang (%)</span>
+              <span className="text-[10px] font-bold text-[#1e3a8a] mb-1">orang</span>
             </div>
           </div>
         </div>
@@ -238,7 +201,6 @@ export default function AdminDashboard() {
                 <div className="h-48 w-full mt-6 relative">
                     <svg viewBox="-10 -10 420 180" className="w-full h-full overflow-visible">
                         
-                        {/* DEKLARASI GRADIENT WARNA (Efek Cahaya/Glow) */}
                         <defs>
                             <linearGradient id="glowBlue" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.2"/>
@@ -281,7 +243,7 @@ export default function AdminDashboard() {
                         <path d={getSmoothPath('hadir')} fill="none" stroke="#22c55e" strokeWidth="1.5" />
                         <path d={getSmoothPath('terlambat')} fill="none" stroke="#f97316" strokeWidth="1.5" />
 
-                        {/* Titik Hover Interaktif (Dengan stroke putih seperti di gambar) */}
+                        {/* Titik Hover Interaktif */}
                         {lineData.map((d, i) => {
                            const x = i * xStep;
                            const yHadir = lineChartHeight - (d.hadir / maxLineVal) * lineChartHeight;
@@ -290,13 +252,10 @@ export default function AdminDashboard() {
 
                            return (
                              <g key={`points-${i}`}>
-                               {/* Hover Biru */}
                                <circle cx={x} cy={yAbsen} r="3.5" fill="#3b82f6" stroke="white" strokeWidth="1.5" className="cursor-pointer hover:r-[5px] transition-all duration-200"
                                   onMouseEnter={(e) => handleMouseMove(e, d.label, 'Tidak Hadir/Absen', d.absen, '#3b82f6')} onMouseLeave={hideTooltip} />
-                               {/* Hover Hijau */}
                                <circle cx={x} cy={yHadir} r="3.5" fill="#22c55e" stroke="white" strokeWidth="1.5" className="cursor-pointer hover:r-[5px] transition-all duration-200"
                                   onMouseEnter={(e) => handleMouseMove(e, d.label, 'Hadir', d.hadir, '#22c55e')} onMouseLeave={hideTooltip} />
-                               {/* Hover Orange */}
                                <circle cx={x} cy={yTerlambat} r="3.5" fill="#f97316" stroke="white" strokeWidth="1.5" className="cursor-pointer hover:r-[5px] transition-all duration-200"
                                   onMouseEnter={(e) => handleMouseMove(e, d.label, 'Terlambat', d.terlambat, '#f97316')} onMouseLeave={hideTooltip} />
                              </g>
@@ -311,15 +270,14 @@ export default function AdminDashboard() {
 
             {/* GRAFIK 2: Presentasi Kehadiran (Interactive Radar Chart) */}
             <div className="bg-white rounded-xl p-6 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] flex flex-col items-center">
-                <h3 className="text-[14px] font-bold text-[#1e3a8a] w-full mb-2">Presentasi Kehadiran hari ini</h3>
+                <h3 className="text-[14px] font-bold text-[#1e3a8a] w-full mb-2">Kehadiran Berdasarkan Mapel</h3>
                 <div className="flex items-center gap-4 text-[9px] font-semibold text-gray-500 mb-4">
-                    <div className="flex items-center gap-1"><span className="w-6 h-2 bg-[#3b82f6] rounded-sm"></span> Alokasi Max</div>
-                    <div className="flex items-center gap-1"><span className="w-6 h-2 bg-[#22c55e] rounded-sm"></span> Aktual Hadir</div>
+                    <div className="flex items-center gap-1"><span className="w-6 h-2 bg-[#3b82f6] rounded-sm"></span> Total Guru (Mapel)</div>
+                    <div className="flex items-center gap-1"><span className="w-6 h-2 bg-[#22c55e] rounded-sm"></span> Hadir Hari Ini</div>
                 </div>
                 
                 <div className="flex-1 w-full flex items-center justify-center relative mt-2">
                     <svg viewBox="0 0 200 200" className="w-full max-w-[180px] h-full overflow-visible">
-                        {/* Jaring Laba-laba (Grid) */}
                         {[0.3, 0.6, 1].map(scale => (
                            <polygon key={scale} 
                               points={radarData.map((_, i) => {
@@ -328,45 +286,45 @@ export default function AdminDashboard() {
                               fill="none" stroke="#e5e7eb" strokeWidth="1"
                            />
                         ))}
-                        {/* Garis Tulang (Axes) */}
                         {radarData.map((_, i) => {
                            const p = getRadarPoint(100, i);
                            return <line key={`axis-${i}`} x1={radarCenter} y1={radarCenter} x2={p.x} y2={p.y} stroke="#e5e7eb" strokeWidth="1"/>
                         })}
 
-                        {/* Label Departemen / Mapel */}
                         {radarData.map((d, i) => {
-                           const p = getRadarPoint(135, i); // Dorong label agak keluar
+                           const p = getRadarPoint(135, i); 
                            return (
                                <text key={`label-${d.subject}`} x={p.x} y={p.y} fontSize="7" fill="#9ca3af" 
                                      textAnchor={p.x < 90 ? 'end' : p.x > 110 ? 'start' : 'middle'} 
                                      dominantBaseline="middle">
-                                   {d.subject}
+                                   {d.subject || 'Lainnya'}
                                </text>
                            )
                         })}
 
-                        {/* Area Polygon Biru (Alokasi) */}
                         <polygon 
-                           points={radarData.map((d, i) => { const p = getRadarPoint(d.alokasi, i); return `${p.x},${p.y}`; }).join(' ')} 
+                           points={radarData.map((d, i) => { 
+                             // Gunakan alokasi sebagai nilai max
+                             const p = getRadarPoint(d.alokasi, i, d.alokasi); return `${p.x},${p.y}`; 
+                           }).join(' ')} 
                            fill="#3b82f6" fillOpacity="0.1" stroke="#3b82f6" strokeWidth="1.5" 
                         />
-                        {/* Area Polygon Hijau (Aktual) */}
                         <polygon 
-                           points={radarData.map((d, i) => { const p = getRadarPoint(d.aktual, i); return `${p.x},${p.y}`; }).join(' ')} 
+                           points={radarData.map((d, i) => { 
+                             const p = getRadarPoint(d.aktual, i, d.alokasi); return `${p.x},${p.y}`; 
+                           }).join(' ')} 
                            fill="#22c55e" fillOpacity="0.2" stroke="#22c55e" strokeWidth="1.5" 
                         />
 
-                        {/* Titik Hover Interaktif Radar */}
                         {radarData.map((d, i) => {
-                           const pAktual = getRadarPoint(d.aktual, i);
-                           const pAlokasi = getRadarPoint(d.alokasi, i);
+                           const pAktual = getRadarPoint(d.aktual, i, d.alokasi);
+                           const pAlokasi = getRadarPoint(d.alokasi, i, d.alokasi);
                            return (
                                <g key={`radar-points-${i}`}>
                                    <circle cx={pAlokasi.x} cy={pAlokasi.y} r="4" fill="transparent" className="cursor-pointer"
-                                      onMouseEnter={(e) => handleMouseMove(e, d.subject, 'Alokasi Max', d.alokasi, '#3b82f6')} onMouseLeave={hideTooltip} />
+                                      onMouseEnter={(e) => handleMouseMove(e, d.subject || 'Lainnya', 'Total Guru', d.alokasi, '#3b82f6')} onMouseLeave={hideTooltip} />
                                    <circle cx={pAktual.x} cy={pAktual.y} r="3.5" fill="#22c55e" stroke="white" strokeWidth="1.5" className="cursor-pointer hover:r-[5px] transition-all"
-                                      onMouseEnter={(e) => handleMouseMove(e, d.subject, 'Aktual Hadir', d.aktual, '#22c55e')} onMouseLeave={hideTooltip} />
+                                      onMouseEnter={(e) => handleMouseMove(e, d.subject || 'Lainnya', 'Hadir Hari Ini', d.aktual, '#22c55e')} onMouseLeave={hideTooltip} />
                                </g>
                            )
                         })}
@@ -385,21 +343,21 @@ export default function AdminDashboard() {
                         <div className="flex items-start justify-between group cursor-pointer">
                             <div className="flex items-start gap-3">
                                 <span className="text-red-400 font-bold text-sm mt-0.5">•</span>
-                                <div><p className="text-[12px] font-semibold text-gray-800">6 guru absen di luar radius sekolah</p><p className="text-[10px] text-gray-500">lihat detail untuk validasi</p></div>
+                                <div><p className="text-[12px] font-semibold text-gray-800">{stats.tidakHadir} guru tidak hadir hari ini</p><p className="text-[10px] text-gray-500">Cek alasan ketidakhadiran</p></div>
                             </div>
                             <ChevronRight className="w-4 h-4 text-gray-400 mt-1 group-hover:text-gray-600 transition-colors" />
                         </div>
                         <div className="flex items-start justify-between group cursor-pointer">
                             <div className="flex items-start gap-3">
                                 <FileText className="w-4 h-4 text-[#eab308] mt-0.5" />
-                                <div><p className="text-[12px] font-semibold text-gray-800">3 guru belum absen masuk</p><p className="text-[10px] text-gray-500">Periksa daftar absensi hari ini</p></div>
+                                <div><p className="text-[12px] font-semibold text-gray-800">{stats.terlambat} guru datang terlambat</p><p className="text-[10px] text-gray-500">Periksa daftar absensi</p></div>
                             </div>
                             <ChevronRight className="w-4 h-4 text-gray-400 mt-1 group-hover:text-gray-600 transition-colors" />
                         </div>
                         <div className="flex items-start justify-between group cursor-pointer">
                             <div className="flex items-start gap-3">
                                 <span className="w-4"></span>
-                                <div><p className="text-[12px] font-semibold text-gray-800">2 Pengajuan Izin menunggu persetujuan</p><p className="text-[10px] text-gray-500">Tindak lanjuti sekarang</p></div>
+                                <div><p className="text-[12px] font-semibold text-gray-800">{stats.izin} Guru Sedang Izin/Cuti</p><p className="text-[10px] text-gray-500">Lihat rincian pengajuan</p></div>
                             </div>
                             <ChevronRight className="w-4 h-4 text-gray-400 mt-1 group-hover:text-gray-600 transition-colors" />
                         </div>
@@ -426,19 +384,35 @@ export default function AdminDashboard() {
                                 <th className="px-5 py-3 w-12">No</th>
                                 <th className="px-5 py-3">Nama Guru</th>
                                 <th className="px-5 py-3">Foto</th>
-                                <th className="px-5 py-3">Jabatan</th>
+                                <th className="px-5 py-3">Mata Pelajaran</th>
                                 <th className="px-5 py-3">Jam Masuk</th>
                                 <th className="px-5 py-3">Jam Pulang</th>
                                 <th className="px-5 py-3">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 text-gray-600 font-medium">
-                            {/* Dummy rendering */}
-                            <tr className="hover:bg-gray-50 transition-colors"><td className="px-5 py-4">1</td><td className="px-5 py-4">Jamal</td><td className="px-5 py-4"><img src="https://i.pravatar.cc/150?img=11" alt="Jamal" className="w-7 h-7 rounded object-cover" /></td><td className="px-5 py-4">Guru Informatika</td><td className="px-5 py-4">07.20</td><td className="px-5 py-4">15.30</td><td className="px-5 py-4 font-bold text-[#22c55e]">Hadir</td></tr>
-                            <tr className="hover:bg-gray-50 transition-colors"><td className="px-5 py-4">2</td><td className="px-5 py-4">Anton</td><td className="px-5 py-4"></td><td className="px-5 py-4">Guru Indonesia</td><td className="px-5 py-4">07.25</td><td className="px-5 py-4">-</td><td className="px-5 py-4 font-bold text-[#22c55e]">Hadir</td></tr>
-                            <tr className="hover:bg-gray-50 transition-colors"><td className="px-5 py-4">3</td><td className="px-5 py-4">Jeno</td><td className="px-5 py-4"></td><td className="px-5 py-4">Guru PKN</td><td className="px-5 py-4">08.05</td><td className="px-5 py-4">-</td><td className="px-5 py-4 font-bold text-[#eab308]">Terlambat</td></tr>
-                            <tr className="hover:bg-gray-50 transition-colors"><td className="px-5 py-4">4</td><td className="px-5 py-4">Naila</td><td className="px-5 py-4"></td><td className="px-5 py-4">Guru Matematika</td><td className="px-5 py-4">07.27</td><td className="px-5 py-4">16.00</td><td className="px-5 py-4 font-bold text-[#22c55e]">Hadir</td></tr>
-                            <tr className="hover:bg-gray-50 transition-colors"><td className="px-5 py-4">5</td><td className="px-5 py-4">Karina</td><td className="px-5 py-4"></td><td className="px-5 py-4">Guru Fisika</td><td className="px-5 py-4">-</td><td className="px-5 py-4">-</td><td className="px-5 py-4 font-bold text-[#ef4444]">Tidak Hadir</td></tr>
+                            {isLoading ? (
+                                <tr><td colSpan={7} className="px-5 py-8 text-center text-gray-400">Lagi loading euyy....</td></tr>
+                            ) : recentAttendances.length === 0 ? (
+                                <tr><td colSpan={7} className="px-5 py-8 text-center text-gray-400">Belum ada absensi hari ini.</td></tr>
+                            ) : recentAttendances.map((att, i) => (
+                                <tr key={att.id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-5 py-4">{i + 1}</td>
+                                    <td className="px-5 py-4">{att.name}</td>
+                                    <td className="px-5 py-4">
+                                        {att.avatar_url ? <img src={att.avatar_url} alt={att.name} className="w-7 h-7 rounded object-cover" /> : <div className="w-7 h-7 rounded bg-gray-200 flex items-center justify-center text-gray-500 text-xs">{att.name?.charAt(0)}</div>}
+                                    </td>
+                                    <td className="px-5 py-4">{att.subject || '-'}</td>
+                                    <td className="px-5 py-4">{formatTime(att.check_in_time)}</td>
+                                    <td className="px-5 py-4">{formatTime(att.check_out_time)}</td>
+                                    <td className="px-5 py-4 font-bold">
+                                        {att.status === 'hadir' && <span className="text-[#22c55e]">Hadir</span>}
+                                        {att.status === 'terlambat' && <span className="text-[#eab308]">Terlambat</span>}
+                                        {att.status === 'tidak_hadir' && <span className="text-[#ef4444]">Tidak Hadir</span>}
+                                        {['izin', 'sakit', 'cuti'].includes(att.status) && <span className="text-[#3b82f6]">Izin/Cuti</span>}
+                                    </td>
+                                </tr>
+                            ))}
                         </tbody>
                     </table>
                 </div>
@@ -447,27 +421,32 @@ export default function AdminDashboard() {
             <div className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] p-6">
                 <h3 className="text-[14px] font-bold text-gray-900 mb-6">Aktivitas terbaru</h3>
                 <div className="space-y-6">
-                    <div className="flex justify-between items-start gap-4">
-                        <div className="flex gap-3">
-                            <div className="w-1.5 h-1.5 rounded-full bg-gray-400 mt-1.5 shrink-0"></div>
-                            <div><p className="text-[12px] font-semibold text-gray-800">Naila mengajukan izin</p><p className="text-[10px] text-gray-500 mt-0.5">Izin sakit - 11 Mei 2026</p></div>
+                    {isLoading ? (
+                         <p className="text-center text-xs text-gray-400 py-4">Memuat...</p>
+                    ) : activities.length === 0 ? (
+                         <p className="text-center text-xs text-gray-400 py-4">Belum ada aktivitas.</p>
+                    ) : activities.map((act, i) => (
+                        <div key={i} className="flex justify-between items-start gap-4">
+                            <div className="flex gap-3">
+                                {act.source === 'leave' ? (
+                                     <FileText className="w-4 h-4 text-[#eab308] mt-0.5 shrink-0" />
+                                ) : (
+                                     <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0"></div>
+                                )}
+                                <div>
+                                    <p className="text-[12px] font-semibold text-gray-800">
+                                        {act.name} {act.source === 'leave' ? `mengajukan ${act.action}` : `absen (${act.action})`}
+                                    </p>
+                                    <p className="text-[10px] text-gray-500 mt-0.5">
+                                        {formatActivityTime(act.created_at)}
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-[10px] text-gray-500 font-medium shrink-0 mt-0.5">
+                                {new Date(act.created_at).getHours().toString().padStart(2, '0')}.{new Date(act.created_at).getMinutes().toString().padStart(2, '0')}
+                            </span>
                         </div>
-                        <span className="text-[10px] text-gray-500 font-medium shrink-0 mt-0.5">07.20</span>
-                    </div>
-                    <div className="flex justify-between items-start gap-4">
-                        <div className="flex gap-3">
-                            <FileText className="w-4 h-4 text-[#eab308] mt-0.5 shrink-0" />
-                            <div><p className="text-[12px] font-semibold text-gray-800">Jeno absen masuk</p><p className="text-[10px] text-gray-500 mt-0.5">11 Mei 2026 - 07:20</p></div>
-                        </div>
-                        <span className="text-[10px] text-gray-500 font-medium shrink-0 mt-0.5">07.20</span>
-                    </div>
-                    <div className="flex justify-between items-start gap-4">
-                        <div className="flex gap-3">
-                            <div className="w-1.5 h-1.5 rounded-full bg-gray-400 mt-1.5 shrink-0"></div>
-                            <div><p className="text-[12px] font-semibold text-gray-800">Jamal absen pulang</p><p className="text-[10px] text-gray-500 mt-0.5">10 Mei 2026 - 15.00</p></div>
-                        </div>
-                        <span className="text-[10px] text-gray-500 font-medium shrink-0 mt-0.5">15.00</span>
-                    </div>
+                    ))}
                 </div>
             </div>
 

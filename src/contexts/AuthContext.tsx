@@ -5,24 +5,30 @@ import {
   useState,
   ReactNode,
 } from 'react';
+import api from '../lib/axios'; // Pastikan path ini mengarah ke file axios.ts yang baru Anda buat
 
-type DemoUser = {
-  id: string;
+// Tipe User dari Laravel
+export type User = {
+  id: string | number;
   email: string;
 };
 
+// Tipe Profile disesuaikan dengan kolom di tabel users Laravel Anda
 export type Profile = {
-  id: string;
-  full_name: string;
+  id: string | number;
+  name: string; // Di Laravel kita menggunakan 'name'
+  full_name?: string; // Menyimpan untuk backward compatibility jika diperlukan
   nip?: string | null;
   role: string;
-  subject?: string;
-  school_id?: string | null;
-  phone?: string;
+  subject?: string | null;
+  school_id?: string | number | null;
+  phone?: string | null;
+  address?: string | null;
+  avatar_url?: string | null;
 };
 
 type AuthContextType = {
-  user: DemoUser | null;
+  user: User | null;
   session: any;
   profile: Profile | null;
   loading: boolean;
@@ -42,53 +48,60 @@ type AuthContextType = {
   refreshProfile: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextType | undefined>(
-  undefined
-);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({
   children,
 }: {
   children: ReactNode;
 }) {
-  const [user, setUser] = useState<DemoUser | null>(null);
-
+  const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<any>(null);
-
-  const [profile, setProfile] =
-    useState<Profile | null>(null);
-
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
   // =========================
-  // LOAD DEMO USER
+  // LOAD USER DARI LARAVEL API
   // =========================
   useEffect(() => {
-    const savedUser = localStorage.getItem('demo_user');
-    const savedProfile =
-      localStorage.getItem('demo_profile');
+    const loadUser = async () => {
+      const token = localStorage.getItem('auth_token');
 
-    if (savedUser && savedProfile) {
-      setUser(JSON.parse(savedUser));
-      setProfile(JSON.parse(savedProfile));
+      if (token) {
+        try {
+          // Minta data user ke Laravel
+          const { data } = await api.get('/me');
+          
+          setUser({ id: data.id, email: data.email });
+          setProfile(data); // Laravel mengembalikan semua data termasuk nip, role, dll
+          setSession({ access_token: token });
+        } catch (error) {
+          console.error('Token tidak valid / expired', error);
+          localStorage.removeItem('auth_token');
+          setUser(null);
+          setProfile(null);
+          setSession(null);
+        }
+      }
 
-      setSession({
-        access_token: 'demo-token',
-      });
-    }
+      setLoading(false);
+    };
 
-    setLoading(false);
+    loadUser();
   }, []);
 
   // =========================
   // REFRESH PROFILE
   // =========================
   async function refreshProfile() {
-    const savedProfile =
-      localStorage.getItem('demo_profile');
-
-    if (savedProfile) {
-      setProfile(JSON.parse(savedProfile));
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      try {
+        const { data } = await api.get('/me');
+        setProfile(data);
+      } catch (error) {
+        console.error('Gagal memuat ulang profil', error);
+      }
     }
   }
 
@@ -100,47 +113,22 @@ export function AuthProvider({
     password: string
   ) {
     try {
-      // DEMO LOGIN
-      const demoUser: DemoUser = {
-        id: 'demo-user-id',
-        email,
-      };
+      // Nembak API Laravel
+      const { data } = await api.post('/login', { email, password });
 
-      const demoProfile: Profile = {
-        id: 'demo-user-id',
-        full_name: 'Naila Aghna',
-        nip: '1247050051',
-        role: email.includes('admin')
-          ? 'admin'
-          : 'guru',
-        subject: 'Informatika',
-        school_id: null,
-        phone: '08123456789',
-      };
-
-      // SAVE LOCAL
-      localStorage.setItem(
-        'demo_user',
-        JSON.stringify(demoUser)
-      );
-
-      localStorage.setItem(
-        'demo_profile',
-        JSON.stringify(demoProfile)
-      );
+      // SAVE TOKEN
+      localStorage.setItem('auth_token', data.access_token);
 
       // SET STATE
-      setUser(demoUser);
-      setProfile(demoProfile);
-
-      setSession({
-        access_token: 'demo-token',
-      });
+      setUser({ id: data.user.id, email: data.user.email });
+      setProfile(data.user);
+      setSession({ access_token: data.access_token });
 
       return { error: null };
     } catch (err: any) {
+      const errMsg = err.response?.data?.message || 'Login gagal. Periksa email dan password.';
       return {
-        error: err,
+        error: new Error(errMsg),
       };
     }
   }
@@ -154,46 +142,36 @@ export function AuthProvider({
     data: Partial<Profile>
   ) {
     try {
-      const demoUser: DemoUser = {
-        id: crypto.randomUUID(),
-        email,
-      };
-
-      const demoProfile: Profile = {
-        id: demoUser.id,
-        full_name: data.full_name || 'User Baru',
+      // Siapkan data sesuai kebutuhan API Laravel (AuthController@register)
+      const payload = {
+        email: email,
+        password: password,
+        password_confirmation: password, // Laravel butuh ini untuk validasi `confirmed`
+        name: data.full_name || data.name || 'User Baru', // Map full_name ke name
         nip: data.nip || '',
         role: data.role || 'guru',
         subject: data.subject || '',
-        school_id: data.school_id || null,
         phone: data.phone || '',
       };
 
-      // SAVE LOCAL
-      localStorage.setItem(
-        'demo_user',
-        JSON.stringify(demoUser)
-      );
+      // Nembak API Laravel
+      const { data: responseData } = await api.post('/register', payload);
 
-      localStorage.setItem(
-        'demo_profile',
-        JSON.stringify(demoProfile)
-      );
+      // SAVE TOKEN (Auto login setelah register)
+      localStorage.setItem('auth_token', responseData.access_token);
 
       // SET STATE
-      setUser(demoUser);
-      setProfile(demoProfile);
-
-      setSession({
-        access_token: 'demo-token',
-      });
+      setUser({ id: responseData.data.id, email: responseData.data.email });
+      setProfile(responseData.data);
+      setSession({ access_token: responseData.access_token });
 
       return {
         error: null,
       };
     } catch (err: any) {
+      const errMsg = err.response?.data?.message || 'Registrasi gagal. Email mungkin sudah terdaftar.';
       return {
-        error: err,
+        error: new Error(errMsg),
       };
     }
   }
@@ -202,12 +180,18 @@ export function AuthProvider({
   // SIGN OUT
   // =========================
   async function signOut() {
-    localStorage.removeItem('demo_user');
-    localStorage.removeItem('demo_profile');
-
-    setUser(null);
-    setProfile(null);
-    setSession(null);
+    try {
+      // Beritahu Laravel untuk menghapus token ini dari database
+      await api.post('/logout');
+    } catch (error) {
+      console.error('Gagal logout di server', error);
+    } finally {
+      // Hapus data lokal (apapun yang terjadi di server)
+      localStorage.removeItem('auth_token');
+      setUser(null);
+      setProfile(null);
+      setSession(null);
+    }
   }
 
   return (
@@ -223,7 +207,8 @@ export function AuthProvider({
         refreshProfile,
       }}
     >
-      {children}
+      {/* Jangan render children sebelum loading selesai agar halaman yang butuh Auth tidak error */}
+      {!loading && children}
     </AuthContext.Provider>
   );
 }

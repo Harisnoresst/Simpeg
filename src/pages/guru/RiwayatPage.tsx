@@ -1,55 +1,23 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import api from '../../lib/axios'; // <-- Gunakan axios untuk ambil data ke Laravel
 import { useAuth } from '../../contexts/AuthContext';
-import { Monitor, FileX, History, ClipboardList, ChevronLeft, ChevronRight, ArrowLeft, Bell } from 'lucide-react';
+import { Monitor, FileX, History, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react';
 
-// --- Tipe Data Dummy ---
-type DummyAttendance = {
-  id: string;
-  date: string;
-  check_in_time: string | null;
-  check_out_time: string | null;
-  status: 'hadir' | 'terlambat' | 'tidak_hadir' | 'izin';
-  photo_in: string | null;
-  photo_out: string | null;
-  notes: string | null;
-};
-
-const DUMMY_DATA: DummyAttendance[] = Array.from({ length: 20 }).map((_, i) => {
-  const day = String(i + 1).padStart(2, '0');
-  const statusRnd = i % 7 === 0 ? 'izin' : i % 5 === 0 ? 'terlambat' : i === 15 ? 'tidak_hadir' : 'hadir';
-  return {
-    id: String(i + 1),
-    date: `2026-04-${day}`,
-    check_in_time: statusRnd !== 'tidak_hadir' && statusRnd !== 'izin' ? `07.${15 + (i % 20)}` : null,
-    check_out_time: statusRnd !== 'tidak_hadir' && statusRnd !== 'izin' ? '15.00' : null,
-    status: statusRnd,
-    photo_in: statusRnd !== 'tidak_hadir' ? `/profil.png` : null,
-    photo_out: statusRnd !== 'tidak_hadir' ? `/profil2.png` : null,
-    notes: statusRnd === 'izin' ? 'Izin keperluan keluarga' : statusRnd === 'tidak_hadir' ? 'Tanpa keterangan' : null,
-  };
-});
-
-// GENERATE PILIHAN BULAN (12 Bulan untuk Tahun 2026)
+// GENERATE PILIHAN BULAN (Hanya Bulan)
 const MONTH_OPTIONS = [
-  { value: '2026-01', label: 'Januari 2026' },
-  { value: '2026-02', label: 'Februari 2026' },
-  { value: '2026-03', label: 'Maret 2026' },
-  { value: '2026-04', label: 'April 2026' },
-  { value: '2026-05', label: 'Mei 2026' },
-  { value: '2026-06', label: 'Juni 2026' },
-  { value: '2026-07', label: 'Juli 2026' },
-  { value: '2026-08', label: 'Agustus 2026' },
-  { value: '2026-09', label: 'September 2026' },
-  { value: '2026-10', label: 'Oktober 2026' },
-  { value: '2026-11', label: 'November 2026' },
-  { value: '2026-12', label: 'Desember 2026' },
+  { value: '01', label: 'Januari' },
+  { value: '02', label: 'Februari' },
+  { value: '03', label: 'Maret' },
+  { value: '04', label: 'April' },
+  { value: '05', label: 'Mei' },
+  { value: '06', label: 'Juni' },
+  { value: '07', label: 'Juli' },
+  { value: '08', label: 'Agustus' },
+  { value: '09', label: 'September' },
+  { value: '10', label: 'Oktober' },
+  { value: '11', label: 'November' },
+  { value: '12', label: 'Desember' },
 ];
-
-// GENERATE PILIHAN TANGGAL (Contoh: April - Mei 2026 agar cocok dengan data)
-const DATE_OPTIONS: string[] = [];
-for(let i=1; i<=30; i++) DATE_OPTIONS.push(`2026-04-${String(i).padStart(2,'0')}`);
-for(let i=1; i<=31; i++) DATE_OPTIONS.push(`2026-05-${String(i).padStart(2,'0')}`);
 
 export default function RiwayatPage() {
   const { profile } = useAuth();
@@ -57,7 +25,7 @@ export default function RiwayatPage() {
   const [filteredData, setFilteredData] = useState<any[]>([]); 
   const [isLoading, setIsLoading] = useState(true);
 
-  // Filter State (Dropdown)
+  // Filter State
   const [filterMonth, setFilterMonth] = useState(''); 
   const [filterDate, setFilterDate] = useState(''); 
 
@@ -73,37 +41,28 @@ export default function RiwayatPage() {
       if (!profile) return;
       setIsLoading(true);
 
-      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
-      
       try {
-        const { data, error } = await supabase
-          .from('attendances')
-          .select('*')
-          .eq('user_id', profile.id)
-          .gte('date', startOfMonth)
-          .order('date', { ascending: false })
-          .limit(50);
-
+        // Ambil data riwayat dari Laravel
+        const { data } = await api.get('/attendance/history');
+        
         if (data && data.length > 0) {
-           const mappedData = data.map(item => ({
+           // Menyesuaikan nama kolom MySQL dengan tampilan tabel UI
+           const mappedData = data.map((item: any) => ({
               ...item,
-              photo_in: item.photo_in || null, 
-              photo_out: item.photo_out || null,
+              photo_in: item.check_in_photo || null, 
+              photo_out: item.check_out_photo || null,
               notes: item.notes || null,
            }));
            setRawData(mappedData);
            setFilteredData(mappedData);
            calculateSummary(mappedData);
         } else {
-           setRawData(DUMMY_DATA);
-           setFilteredData(DUMMY_DATA);
-           calculateSummary(DUMMY_DATA);
+           setRawData([]);
+           setFilteredData([]);
+           calculateSummary([]);
         }
       } catch (err) {
-        console.error("Gagal load data:", err);
-        setRawData(DUMMY_DATA);
-        setFilteredData(DUMMY_DATA);
-        calculateSummary(DUMMY_DATA);
+        console.error("Gagal load data dari database:", err);
       } finally {
         setIsLoading(false);
       }
@@ -117,21 +76,23 @@ export default function RiwayatPage() {
       const newSummary = { hadir: 0, tidakHadir: 0, terlambat: 0, izin: 0 };
       data.forEach(a => {
         if (a.status === 'hadir') newSummary.hadir++;
-        else if (a.status === 'tidak_hadir') newSummary.tidakHadir++;
+        else if (a.status === 'tidak_hadir' || a.status === 'tidak hadir') newSummary.tidakHadir++;
         else if (a.status === 'terlambat') newSummary.terlambat++;
         else if (['izin', 'sakit', 'cuti'].includes(a.status)) newSummary.izin++;
       });
       setSummary(newSummary);
   };
 
-  // Fungsi Menerapkan Filter Dropdown
+  // Fungsi Menerapkan Filter (Bulan & Tanggal)
   const handleApplyFilter = () => {
       let result = [...rawData];
 
       if (filterDate) {
+          // Cari berdasarkan tanggal spesifik (YYYY-MM-DD)
           result = result.filter(item => item.date === filterDate);
       } else if (filterMonth) {
-          result = result.filter(item => item.date.startsWith(filterMonth));
+          // Cari berdasarkan bulan saja (ambil index ke-1 dari split '-')
+          result = result.filter(item => item.date.split('-')[1] === filterMonth);
       }
 
       setFilteredData(result);
@@ -163,7 +124,7 @@ export default function RiwayatPage() {
   const getStatusStyle = (status: string) => {
     switch(status?.toLowerCase()) {
       case 'hadir': return 'text-green-600 bg-green-50 border border-green-200';
-      case 'izin': return 'text-blue-600 bg-blue-50 border border-blue-200';
+      case 'izin': case 'sakit': case 'cuti': return 'text-blue-600 bg-blue-50 border border-blue-200';
       case 'tidak_hadir': case 'tidak hadir': return 'text-red-600 bg-red-50 border border-red-200';
       case 'terlambat': return 'text-yellow-600 bg-yellow-50 border border-yellow-200';
       default: return 'text-gray-600 bg-gray-50 border border-gray-200';
@@ -172,7 +133,7 @@ export default function RiwayatPage() {
 
   const getStatusLabel = (status: string) => {
       if(status === 'tidak_hadir') return 'Tidak Hadir';
-      return status.charAt(0).toUpperCase() + status.slice(1);
+      return status ? status.charAt(0).toUpperCase() + status.slice(1) : '-';
   }
 
   return (
@@ -201,7 +162,7 @@ export default function RiwayatPage() {
                   <History className="absolute bottom-4 right-4 w-5 h-5 text-gray-400" />
                 </div>
                 <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-4 relative">
-                  <p className="text-blue-600 font-semibold text-sm mb-2">Izin</p>
+                  <p className="text-blue-600 font-semibold text-sm mb-2">Izin/Sakit</p>
                   <p className="text-3xl font-bold text-blue-600">{summary.izin}</p>
                   <ClipboardList className="absolute bottom-4 right-4 w-5 h-5 text-gray-400" />
                 </div>
@@ -233,25 +194,18 @@ export default function RiwayatPage() {
                       </div>
                   </div>
 
-                  {/* Filter Tanggal: Dropdown */}
+                  {/* Filter Tanggal: TYPE KALENDER (DATE) */}
                   <div className="flex-1 relative">
-                      <span className="absolute left-3 top-[-8px] bg-white px-1 text-[10px] text-gray-400 z-10">Date</span>
-                      <select 
-                        className="w-full border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:border-blue-500 appearance-none bg-white cursor-pointer"
+                      <span className="absolute left-3 top-[-8px] bg-white px-1 text-[10px] text-gray-400 z-10">Tgl.</span>
+                      <input 
+                        type="date" 
+                        className="w-full border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:border-blue-500 bg-white cursor-pointer"
                         value={filterDate}
                         onChange={(e) => {
                             setFilterDate(e.target.value);
                             setFilterMonth(''); // Reset bulan jika tanggal dipilih
                         }}
-                      >
-                          <option value="">Pilih Tanggal</option>
-                          {DATE_OPTIONS.map(date => (
-                              <option key={date} value={date}>{date.replace(/-/g, '/')}</option>
-                          ))}
-                      </select>
-                      <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
-                          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                      </div>
+                      />
                   </div>
               </div>
 
@@ -290,13 +244,13 @@ export default function RiwayatPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {isLoading ? (
-                  <tr><td colSpan={8} className="px-6 py-8 text-center text-gray-500">Memuat data...</td></tr>
+                  <tr><td colSpan={8} className="px-6 py-8 text-center text-gray-500">Memuat data dari database...</td></tr>
                 ) : paginatedData.length === 0 ? (
-                  <tr><td colSpan={8} className="px-6 py-8 text-center text-gray-400">Tidak ada data untuk filter ini</td></tr>
+                  <tr><td colSpan={8} className="px-6 py-8 text-center text-gray-400">Tidak ada riwayat absensi.</td></tr>
                 ) : paginatedData.map((att, index) => (
                   <tr key={att.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4 text-gray-500">{startIndex + index + 1}</td>
-                    <td className="px-6 py-4 text-gray-600">{formatDateDisplay(att.date)}</td>
+                    <td className="px-6 py-4 text-gray-600 font-medium">{formatDateDisplay(att.date)}</td>
                     <td className="px-6 py-4 text-gray-600">{att.check_in_time || '-'}</td>
                     <td className="px-6 py-4 text-gray-600">{att.check_out_time || '-'}</td>
                     <td className="px-6 py-4">
@@ -307,18 +261,18 @@ export default function RiwayatPage() {
                     <td className="px-6 py-4">
                         <div className="flex justify-center">
                             {att.photo_in ? (
-                                <div className="w-8 h-8 rounded overflow-hidden bg-gray-200">
+                                <a href={att.photo_in} target="_blank" rel="noreferrer" className="w-8 h-8 rounded overflow-hidden bg-gray-200 hover:opacity-80 transition-opacity">
                                     <img src={att.photo_in} alt="Masuk" className="w-full h-full object-cover" />
-                                </div>
+                                </a>
                             ) : <span className="text-gray-400">-</span>}
                         </div>
                     </td>
                     <td className="px-6 py-4">
                         <div className="flex justify-center">
                             {att.photo_out ? (
-                                <div className="w-8 h-8 rounded overflow-hidden bg-gray-200">
+                                <a href={att.photo_out} target="_blank" rel="noreferrer" className="w-8 h-8 rounded overflow-hidden bg-gray-200 hover:opacity-80 transition-opacity">
                                     <img src={att.photo_out} alt="Pulang" className="w-full h-full object-cover" />
-                                </div>
+                                </a>
                             ) : <span className="text-gray-400">-</span>}
                         </div>
                     </td>
@@ -346,7 +300,6 @@ export default function RiwayatPage() {
                           <ChevronLeft className="w-5 h-5" />
                       </button>
                       
-                      {/* Render Tombol Halaman (1, 2, 3...) */}
                       {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
                           <button
                             key={page}
